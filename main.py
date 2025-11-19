@@ -5,6 +5,26 @@ import time
 from datetime import datetime
 import os
 
+def load_env_file(path=".env"):
+    if not os.path.exists(path):
+        return
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            # skip comments and empty lines
+            if not line or line.startswith("#"):
+                continue
+            key, value = line.split("=", 1)
+            os.environ[key.strip()] = value.strip()
+
+# Load secrets
+load_env_file()
+
+WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
+if not WEBHOOK_URL:
+    raise RuntimeError("DISCORD_WEBHOOK not set.")
+
+
 def scrape_jobs():
     """Scrape jobs and return a list of job dicts"""
     url = "http://evertz.applytojob.com/apply/"
@@ -65,6 +85,15 @@ def log_message(message):
     """Print message with timestamp (cron logs will capture this)"""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
+def send_discord_message(content):
+    """Send a message to Discord via webhook"""
+    data = {"content": content}
+    try:
+        r = requests.post(WEBHOOK_URL, json=data)
+        r.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"[ERROR] Failed to send Discord message: {e}")
+
 if __name__ == "__main__":
     try:
         log_message("Job check started.")
@@ -74,20 +103,35 @@ if __name__ == "__main__":
 
         new_postings, removed_postings = compare_job_lists(old_jobs, new_jobs)
 
+        discord_messages = []
+
         if new_postings:
             log_message("--- New Jobs ---")
+            msg = "**New Jobs Posted:**\n"
             for job in new_postings:
-                log_message(f"{job['Job name']} | {job['Location']} | {job['Link']}")
+                line = f"{job['Job name']} | {job['Location']} | <{job['Link']}>"
+                log_message(line)
+                msg += f"- {line}\n"
+            discord_messages.append(msg)
 
         if removed_postings:
             log_message("--- Removed Jobs ---")
+            msg = "**Jobs Removed:**\n"
             for job in removed_postings:
-                log_message(f"{job['Job name']} | {job['Location']} | {job['Link']}")
+                line = f"{job['Job name']} | {job['Location']} | <{job['Link']}>"
+                log_message(line)
+                msg += f"- {line}\n"
+            discord_messages.append(msg)
 
         if not new_postings and not removed_postings:
             log_message("No changes found.")
+            discord_messages.append("No job changes found at this check.")
 
         save_jobs(new_jobs)
+
+        for message in discord_messages:
+            send_discord_message(message)
+
         log_message("Job check complete.")
 
     except Exception as e:
