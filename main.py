@@ -11,13 +11,11 @@ def load_env_file(path=".env"):
     with open(path) as f:
         for line in f:
             line = line.strip()
-            # skip comments and empty lines
             if not line or line.startswith("#"):
                 continue
             key, value = line.split("=", 1)
             os.environ[key.strip()] = value.strip()
 
-# Load secrets
 load_env_file()
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
@@ -85,14 +83,30 @@ def log_message(message):
     """Print message with timestamp (cron logs will capture this)"""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
-def send_discord_message(content):
-    """Send a message to Discord via webhook"""
-    data = {"content": content}
+def send_discord_embed(embed_list):
+    """Send embed messages to Discord via webhook"""
+    data = {"embeds": embed_list}
     try:
         r = requests.post(WEBHOOK_URL, json=data)
         r.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"[ERROR] Failed to send Discord message: {e}")
+
+def create_job_embed(job, color, status):
+    """Format a job posting nicely in a Discord embed"""
+    return {
+        "title": job['Job name'],
+        "url": job['Link'],  # clickable title
+        "color": color,
+        "fields": [
+            {"name": "Location", "value": job['Location'], "inline": True},
+            {"name": "Department", "value": job['Department'], "inline": True},
+            {"name": "Status", "value": status, "inline": True}
+        ],
+        "footer": {
+            "text": f"Checked at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        }
+    }
 
 if __name__ == "__main__":
     try:
@@ -100,42 +114,50 @@ if __name__ == "__main__":
 
         old_jobs = load_jobs()
         new_jobs = scrape_jobs()
-
         new_postings, removed_postings = compare_job_lists(old_jobs, new_jobs)
 
-        discord_messages = []
+        embed_batch = []
 
         if new_postings:
             log_message("--- New Jobs ---")
-            msg = "**New Jobs Posted:**\n"
             for job in new_postings:
-                line = f"{job['Job name']} | {job['Location']} | <{job['Link']}>"
-                log_message(line)
-                msg += f"- {line}\n"
-            discord_messages.append(msg)
+                log_message(f"{job['Job name']} | {job['Location']} | {job['Link']}")
+                embed_batch.append(
+                    create_job_embed(job, 0x00FF00, "New")  # Green
+                )
 
         if removed_postings:
             log_message("--- Removed Jobs ---")
-            msg = "**Jobs Removed:**\n"
             for job in removed_postings:
-                line = f"{job['Job name']} | {job['Location']} | <{job['Link']}>"
-                log_message(line)
-                msg += f"- {line}\n"
-            discord_messages.append(msg)
+                log_message(f"{job['Job name']} | {job['Location']} | {job['Link']}")
+                embed_batch.append(
+                    create_job_embed(job, 0xFF0000, "Removed")  # Red
+                )
 
         if not new_postings and not removed_postings:
             log_message("No changes found.")
-            discord_messages.append("No job changes found at this check.")
+            embed_batch.append({
+                "title": "No Job Changes Found",
+                "color": 0x808080,  # Grey
+                "footer": {
+                    "text": f"Checked at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                }
+            })
 
         save_jobs(new_jobs)
 
-        for message in discord_messages:
-            send_discord_message(message)
+        if embed_batch:
+            send_discord_embed(embed_batch)
 
         log_message("Job check complete.")
 
     except Exception as e:
         log_message(f"Error: {e}")
+        send_discord_embed([{
+            "title": "Job Bot Error",
+            "description": str(e),
+            "color": 0xFF0000
+        }])
 
 # print(jobs)
 
