@@ -10,6 +10,6 @@ from main import scrape_jobs, save_jobs
 if __name__ == "__main__":
     try:
         jobs = scrape_jobs(),
-        save_jobs(jobs)
+        save_jobs(jobs[0])
     except Exception as e:
         print(e)
