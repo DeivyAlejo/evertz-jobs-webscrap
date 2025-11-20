@@ -18,9 +18,28 @@ def load_env_file(path=".env"):
 
 load_env_file()
 
-WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
-if not WEBHOOK_URL:
-    raise RuntimeError("DISCORD_WEBHOOK not set.")
+# --- Config ---
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+JOBS_FILE = "jobs_data.json"
+
+if not BOT_TOKEN or not CHANNEL_ID:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID not set in .env")
+
+def send_telegram_message(text, parse_mode="HTML"):
+    """Send a formatted text to the telegram channel"""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHANNEL_ID,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": False
+    }
+    try:
+        r = requests.post(url, json=payload)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        print(f"[ERROR] Telegram message failed: {e}")
 
 
 def scrape_jobs():
@@ -83,14 +102,14 @@ def log_message(message):
     """Print message with timestamp (cron logs will capture this)"""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
 
-def send_discord_embed(embed_list):
-    """Send embed messages to Discord via webhook"""
-    data = {"embeds": embed_list}
-    try:
-        r = requests.post(WEBHOOK_URL, json=data)
-        r.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"[ERROR] Failed to send Discord message: {e}")
+# def send_discord_embed(embed_list):
+#     """Send embed messages to Discord via webhook"""
+#     data = {"embeds": embed_list}
+#     try:
+#         r = requests.post(WEBHOOK_URL, json=data)
+#         r.raise_for_status()
+#     except requests.exceptions.RequestException as e:
+#         print(f"[ERROR] Failed to send Discord message: {e}")
 
 def create_job_embed(job, color, status):
     """Format a job posting nicely in a Discord embed"""
@@ -109,55 +128,35 @@ def create_job_embed(job, color, status):
     }
 
 if __name__ == "__main__":
-    try:
-        log_message("Job check started.")
+    old_jobs = load_jobs(JOBS_FILE)
+    new_jobs = scrape_jobs()
+    new_posts, removed_posts = compare_job_lists(old_jobs, new_jobs)
 
-        old_jobs = load_jobs()
-        new_jobs = scrape_jobs()
-        new_postings, removed_postings = compare_job_lists(old_jobs, new_jobs)
+    messages = []
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        embed_batch = []
+    if new_posts:
+        msg = f"📢 <b>New Job Postings</b>\n"
+        for job in new_posts:
+            msg += f"📗 <a href='{job['Link']}'>{job['Job name']}</a>\nLocation: {job['Location']}\nDepartment: {job['Department']}\n\n"
+        msg += f"<i>Checked: {timestamp}</i>"
+        messages.append(msg)
 
-        if new_postings:
-            log_message("--- New Jobs ---")
-            for job in new_postings:
-                log_message(f"{job['Job name']} | {job['Location']} | {job['Link']}")
-                embed_batch.append(
-                    create_job_embed(job, 0x00FF00, "New")  # Green
-                )
+    if removed_posts:
+        msg = f"❗ <b>Removed Job Postings</b>\n"
+        for job in removed_posts:
+            msg += f"📕 <a href='{job['Link']}'>{job['Job name']}</a>\nLocation: {job['Location']}\nDepartment: {job['Department']}\n\n"
+        msg += f"<i>Checked: {timestamp}</i>"
+        messages.append(msg)
 
-        if removed_postings:
-            log_message("--- Removed Jobs ---")
-            for job in removed_postings:
-                log_message(f"{job['Job name']} | {job['Location']} | {job['Link']}")
-                embed_batch.append(
-                    create_job_embed(job, 0xFF0000, "Removed")  # Red
-                )
+    if not messages:
+        messages.append(f"ℹ️ No job changes.\n<i>Checked: {timestamp}</i>")
 
-        if not new_postings and not removed_postings:
-            log_message("No changes found.")
-            embed_batch.append({
-                "title": "No Job Changes Found",
-                "color": 0x808080,  # Grey
-                "footer": {
-                    "text": f"Checked at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                }
-            })
+    # Send all messages
+    for text in messages:
+        send_telegram_message(text)
 
-        save_jobs(new_jobs)
-
-        if embed_batch:
-            send_discord_embed(embed_batch)
-
-        log_message("Job check complete.")
-
-    except Exception as e:
-        log_message(f"Error: {e}")
-        send_discord_embed([{
-            "title": "Job Bot Error",
-            "description": str(e),
-            "color": 0xFF0000
-        }])
+    save_jobs(new_jobs)
 
 # print(jobs)
 
